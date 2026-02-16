@@ -85,7 +85,7 @@ jobs:
       - name: Checkout Helm chart repository
         uses: actions/checkout@v4
         with:
-          repository: giovannimirarchi420/prognose-helm-chart
+          repository: netgroup-polito/prognose-helm-chart
           token: ${{ secrets.CHART_REPO_TOKEN }}
           path: helm-chart-repo
 
