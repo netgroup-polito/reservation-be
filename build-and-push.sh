@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # Configuration
-IMAGE_NAME="resource-management-backend"
-REGISTRY="docker.io/g420"
+IMAGE_NAME="prognose-backend"
+REGISTRY="docker.io/prognosepolito"
 
 # Colors for output
 GREEN='\033[0;32m'
