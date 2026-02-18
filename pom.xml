@@ -5,7 +5,7 @@
     
     <groupId>it.polito.cloudresources.be</groupId>
     <artifactId>resource-management</artifactId>
-    <version>1.9.5</version>
+    <version>1.9.6</version>
     <name>resource-management</name>
     <description>Cloud Resource Management Backend</description>
     
@@ -18,7 +18,7 @@
 
     <properties>
         <java.version>23</java.version>
-        <keycloak.version>16.1.1</keycloak.version>
+        <keycloak.version>26.0.8</keycloak.version>
         <springdoc.version>2.3.0</springdoc.version>
         <lombok.version>1.18.32</lombok.version>
         <maven.compiler.source>${java.version}</maven.compiler.source>

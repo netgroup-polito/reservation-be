@@ -2,7 +2,8 @@ package it.polito.cloudresources.be.service;
 
 import it.polito.cloudresources.be.dto.users.UserDTO;
 import jakarta.transaction.Transactional;
-import javax.ws.rs.core.Response; // Correct import for Keycloak 16.1.1
+import jakarta.ws.rs.core.Response;     // FIX: updated to Jakarta for Keycloak 26+
+import jakarta.ws.rs.NotFoundException; // FIX: updated to Jakarta for Keycloak 26+
 import lombok.extern.slf4j.Slf4j;
 
 import org.keycloak.OAuth2Constants;
@@ -24,7 +25,7 @@ import org.springframework.context.annotation.Profile;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 
-import javax.ws.rs.NotFoundException; // Added for Keycloak 16.1.1 compatibility
+import jakarta.annotation.PreDestroy;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -70,17 +71,34 @@ public class KeycloakService {
     @Value("${keycloak.credentials.secret}")
     private String clientSecret;
 
+    // FIX: Lazily-initialized singleton to avoid creating a new HTTP client on every method call
+    private volatile Keycloak keycloakClient;
+
     /**
      * Creates an admin Keycloak client
      */
     protected Keycloak getKeycloakClient() {
-        return KeycloakBuilder.builder()
-                .serverUrl(authServerUrl)
-                .realm(realm)
-                .clientId(clientId)
-                .clientSecret(clientSecret)
-                .grantType(OAuth2Constants.CLIENT_CREDENTIALS)
-                .build();
+        if (keycloakClient == null) {
+            synchronized (this) {
+                if (keycloakClient == null) {
+                    keycloakClient = KeycloakBuilder.builder()
+                            .serverUrl(authServerUrl)
+                            .realm(realm)
+                            .clientId(clientId)
+                            .clientSecret(clientSecret)
+                            .grantType(OAuth2Constants.CLIENT_CREDENTIALS)
+                            .build();
+                }
+            }
+        }
+        return keycloakClient;
+    }
+
+    @PreDestroy
+    public void closeKeycloakClient() {
+        if (keycloakClient != null) {
+            keycloakClient.close();
+        }
     }
 
     /**
@@ -97,7 +115,8 @@ public class KeycloakService {
     public List<UserRepresentation> getUsers() {
         try {
             log.debug("Cache miss: Fetching all users from Keycloak");
-            return getRealmResource().users().list();
+            // FIX: explicit pagination to avoid the server-side default limit (typically 100) in KC 26
+            return getRealmResource().users().list(0, Integer.MAX_VALUE);
         } catch (Exception e) {
             log.error("Error fetching users from Keycloak", e);
             return Collections.emptyList();
@@ -111,9 +130,8 @@ public class KeycloakService {
     public Optional<UserRepresentation> getUserByUsername(String username) {
         try {
             log.debug("Cache miss: Fetching user by username '{}'", username);
-            // Keycloak 16.1.1 admin client does not have search(username, exact)
-            // Using search by username field, first result, max 1.
-            List<UserRepresentation> users = getRealmResource().users().search(username, null, null, null, 0, 1);
+            // FIX: KC 26 supports the exact-match convenience overload search(username, exact)
+            List<UserRepresentation> users = getRealmResource().users().search(username, true);
             return users.isEmpty() ? Optional.empty() : Optional.of(users.get(0));
         } catch (Exception e) {
             log.error("Error fetching user from Keycloak by username", e);
@@ -208,7 +226,9 @@ public class KeycloakService {
     @Caching(evict = {
             @CacheEvict(value = USER_BY_ID_CACHE, key = "#userId"),
             @CacheEvict(value = USERS_CACHE, allEntries = true),
-            @CacheEvict(value = USER_ATTRIBUTES_CACHE, key = "#userId + '_*'"),
+            // FIX: Spring Cache does not support wildcard keys; allEntries = true evicts all attribute entries for all users.
+            // This is a safe over-eviction — the alternative would be a per-attribute key or a custom CacheManager.
+            @CacheEvict(value = USER_ATTRIBUTES_CACHE, allEntries = true),
             @CacheEvict(value = USER_ROLES_CACHE, key = "#userId"),
             @CacheEvict(value = USER_BY_USERNAME_CACHE, allEntries = true),
             @CacheEvict(value = USER_BY_EMAIL_CACHE, allEntries = true),
@@ -339,7 +359,8 @@ public class KeycloakService {
     @Caching(evict = {
             @CacheEvict(value = USER_BY_ID_CACHE, key = "#userId"),
             @CacheEvict(value = USERS_CACHE, allEntries = true),
-            @CacheEvict(value = USER_ATTRIBUTES_CACHE, key = "#userId + '_*'"),
+            // FIX: Spring Cache does not support wildcard keys; see comment in updateUser()
+            @CacheEvict(value = USER_ATTRIBUTES_CACHE, allEntries = true),
             @CacheEvict(value = USER_ROLES_CACHE, key = "#userId"),
             @CacheEvict(value = USER_GROUPS_CACHE, key = "#userId"),
             @CacheEvict(value = USER_ADMIN_GROUPS_CACHE, key = "#userId"),
@@ -421,8 +442,7 @@ public class KeycloakService {
         for (String roleName : roleNames) {
             try {
                 // Attempt to get the role.
-                // In Keycloak 16.1.1, if the role doesn't exist, .toRepresentation() on the proxy
-                // or .get(roleName) itself might throw NotFoundException.
+                // In Keycloak 26, if the role doesn't exist, .toRepresentation() throws NotFoundException (Jakarta).
                 realmResource.roles().get(roleName).toRepresentation(); // This line checks existence
                 log.debug("Role {} already exists in Keycloak.", roleName);
             } catch (NotFoundException e) {
@@ -478,7 +498,8 @@ public class KeycloakService {
     @Cacheable(value = GROUPS_CACHE)
     public List<GroupRepresentation> getAllGroups() {
         log.debug("Cache miss: Fetching all groups");
-        return getRealmResource().groups().groups();
+        // FIX: explicit pagination to avoid the server-side default limit in KC 26
+        return getRealmResource().groups().groups(0, Integer.MAX_VALUE);
     }
     
     @Cacheable(value = GROUP_BY_ID_CACHE, key = "#groupId"/*,  unless = "#result.isEmpty()" */)
@@ -497,7 +518,8 @@ public class KeycloakService {
     public Optional<GroupRepresentation> getGroupByName(String groupName) {
         try {
             log.debug("Cache miss: Fetching group by name '{}'", groupName);
-            return getRealmResource().groups().groups().stream()
+            // FIX: explicit pagination to avoid the server-side default limit in KC 26
+            return getRealmResource().groups().groups(0, Integer.MAX_VALUE).stream()
                     .filter(group -> group.getName().equals(groupName))
                     .findFirst();
         } catch (Exception e) {
@@ -1016,6 +1038,8 @@ public class KeycloakService {
     /**
      * Get all sites a user belongs to as GroupRepresentations
      */
+    // FIX: added @Cacheable — USER_GROUPS_CACHE was being evicted in multiple methods but never populated through this path
+    @Cacheable(value = USER_GROUPS_CACHE, key = "#userId", unless = "#result.isEmpty()")
     public List<GroupRepresentation> getUserGroups(String userId) {
         try {
             // Get the user resource
@@ -1187,7 +1211,8 @@ public class KeycloakService {
             UserResource userResource = getRealmResource().users().get(userId);
             
             // Get all groups in the realm
-            List<GroupRepresentation> groups = getRealmResource().groups().groups();
+            // FIX: explicit pagination to avoid the server-side default limit in KC 26
+            List<GroupRepresentation> groups = getRealmResource().groups().groups(0, Integer.MAX_VALUE);
             
             // Join each group individually
             for (GroupRepresentation group : groups) {
