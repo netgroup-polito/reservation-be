@@ -62,6 +62,20 @@ public class Event extends AuditableEntity {
     @Column(name = "end_notified_at")
     private ZonedDateTime endNotifiedAt;
 
+    @Column(name = "operating_system")
+    private String operatingSystem;
+
+    // --- NUOVI CAMPI AGGIUNTI PER METAL3 ---
+    @Column(name = "image_url", columnDefinition = "TEXT")
+    private String imageUrl;
+
+    @Column(name = "checksum_url", columnDefinition = "TEXT")
+    private String checksumUrl;
+
+    @Column(name = "checksum_type", length = 20)
+    private String checksumType;
+    // ----------------------------------------
+
     /**
      * Pre-persist hook to ensure start and end dates have correct timezone.
      */
@@ -97,14 +111,17 @@ public class Event extends AuditableEntity {
     @Override
     public String toString() {
         return "Event{" +
-               "id=" + id +
-               ", title='" + title + '\'' +
-               ", start=" + start +
-               ", end=" + end +
-               ", resourceId=" + (resource != null ? resource.getId() : null) +
-               ", keycloakId='" + keycloakId + '\'' +
-               ", startNotifiedAt=" + startNotifiedAt +
-               ", endNotifiedAt=" + endNotifiedAt +
-               '}';
+                "id=" + id +
+                ", title='" + title + '\'' +
+                ", start=" + start +
+                ", end=" + end +
+                ", resourceId=" + (resource != null ? resource.getId() : null) +
+                ", keycloakId='" + keycloakId + '\'' +
+                ", startNotifiedAt=" + startNotifiedAt +
+                ", endNotifiedAt=" + endNotifiedAt +
+                ", operatingSystem='" + operatingSystem + '\'' +
+                ", imageUrl='" + imageUrl + '\'' +
+                ", checksumUrl='" + checksumUrl + '\'' +
+                '}';
     }
 }

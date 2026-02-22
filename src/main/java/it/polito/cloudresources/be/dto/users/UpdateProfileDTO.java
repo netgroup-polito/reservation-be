@@ -30,7 +30,7 @@ public class UpdateProfileDTO {
     @ToString.Exclude
     private String password;
 
-    private String sshPublicKey;
+    // RIMOSSO: private String sshPublicKey; -> Gestito ora tramite Wallet (SshKeyService)
 
     /**
      * Fluent builder for UpdateProfileDTO

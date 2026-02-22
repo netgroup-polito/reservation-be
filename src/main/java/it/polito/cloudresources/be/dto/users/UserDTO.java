@@ -39,7 +39,7 @@ public class UserDTO {
 
     private String avatar;
 
-    private String sshPublicKey;
+    
 
     private Set<String> roles;
 
@@ -135,7 +135,7 @@ public class UserDTO {
                 .lastName(user.getLastName())
                 .email(user.getEmail())
                 .avatar(user.getAvatar())
-                .sshPublicKey(user.getSshPublicKey())
+                // RIMOSSO: .sshPublicKey(user.getSshPublicKey())
                 .roles(user.getRoles() != null ? new HashSet<>(user.getRoles()) : null)
                 .siteId(user.getSiteId());
     }

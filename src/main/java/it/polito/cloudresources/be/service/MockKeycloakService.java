@@ -31,39 +31,40 @@ public class MockKeycloakService extends KeycloakService {
     /**
      * Constructor initializes with basic structure
      */
-    public MockKeycloakService() {
-        log.info("Initializing MockKeycloakService");
-        
-        // Create initial admin user for bootstrapping
-        String adminId = UUID.randomUUID().toString();
-        UserRepresentation adminUser = new UserRepresentation();
-        UserRepresentation user = new UserRepresentation();
+   public MockKeycloakService() {
+    log.info("Initializing MockKeycloakService");
+    
+    String adminId = UUID.randomUUID().toString();
+    UserRepresentation adminUser = new UserRepresentation();
+    UserRepresentation user = new UserRepresentation();
 
-        adminUser.setId(adminId);
-        adminUser.setUsername("admin1");
-        adminUser.setEmail("admin@example.com");
-        adminUser.setFirstName("Global");
-        adminUser.setLastName("Admin");
-        adminUser.setEnabled(true);
-        
-        users.put(adminId, adminUser);
+    adminUser.setId(adminId);
+    adminUser.setUsername("admin1");
+    adminUser.setEmail("admin@example.com");
+    adminUser.setFirstName("Global");
+    adminUser.setLastName("Admin");
+    adminUser.setEnabled(true);
+    
+    users.put(adminId, adminUser);
 
-        String userId = UUID.randomUUID().toString();
+    String userId = UUID.randomUUID().toString();
 
-        user.setId(userId);
-        user.setUsername("user1");
-        user.setEmail("user@example.com");
-        user.setFirstName("User");
-        user.setLastName("UserLasname");
-        user.setEnabled(true);
-        
-        users.put(userId, user);
-        userRoles.put(adminId, new ArrayList<>(Arrays.asList("GLOBAL_ADMIN", "USER")));
-        userSites.put(adminId, new HashSet<>());
-        userRoles.put(userId, new ArrayList<>(Arrays.asList("GLOBAL_ADMIN", "USER")));
-        userSites.put(userId, new HashSet<>());
-        
-        log.info("Created bootstrap admin user with ID: {}", adminId);
+    user.setId(userId);
+    user.setUsername("user1");
+    user.setEmail("user@example.com");
+    user.setFirstName("User");
+    user.setLastName("UserLasname");
+    user.setEnabled(true);
+    
+    users.put(userId, user);
+    
+    // USIAMO RUOLI MINUSCOLI
+    userRoles.put(adminId, new ArrayList<>(Arrays.asList("global_admin", "user")));
+    userSites.put(adminId, new HashSet<>());
+    userRoles.put(userId, new ArrayList<>(Arrays.asList("user")));
+    userSites.put(userId, new HashSet<>());
+    
+    log.info("Created bootstrap admin user with ID: {}", adminId);
     }
 
     /**
@@ -123,9 +124,9 @@ public class MockKeycloakService extends KeycloakService {
 
         // Set attributes
         Map<String, List<String>> attributes = new HashMap<>();
-        if (userDTO.getSshPublicKey() != null && !userDTO.getSshPublicKey().isEmpty()) {
-            attributes.put(ATTR_SSH_KEY, Collections.singletonList(userDTO.getSshPublicKey()));
-        }
+        
+        // RIMOSSO BLOCCO SSH KEY (che usava ATTR_SSH_KEY)
+        
         if (userDTO.getAvatar() != null && !userDTO.getAvatar().isEmpty()) {
             attributes.put(ATTR_AVATAR, Collections.singletonList(userDTO.getAvatar()));
         }
@@ -176,14 +177,7 @@ public class MockKeycloakService extends KeycloakService {
         // Handle user attributes
         Map<String, List<String>> userAttrs = userAttributes.getOrDefault(userId, new HashMap<>());
 
-        if (attributes.containsKey(ATTR_SSH_KEY)) {
-            String sshKey = (String) attributes.get(ATTR_SSH_KEY);
-            if (sshKey != null && !sshKey.isEmpty()) {
-                userAttrs.put(ATTR_SSH_KEY, Collections.singletonList(sshKey));
-            } else {
-                userAttrs.remove(ATTR_SSH_KEY);
-            }
-        }
+        // RIMOSSO BLOCCO SSH KEY (che usava ATTR_SSH_KEY)
 
         if (attributes.containsKey(ATTR_AVATAR)) {
             String avatar = (String) attributes.get(ATTR_AVATAR);

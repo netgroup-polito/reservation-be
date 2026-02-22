@@ -1,6 +1,5 @@
 package it.polito.cloudresources.be.dto;
 
-
 import com.fasterxml.jackson.annotation.JsonFormat;
 
 import jakarta.validation.constraints.NotBlank;
@@ -13,7 +12,8 @@ import lombok.NoArgsConstructor;
 import java.time.ZonedDateTime;
 
 /**
- * DTO for Event data transfer
+ * DTO for Event data transfer.
+ * Updated to support Metal3 provisioning logic (Standard ISO, Favorites, Custom URLs).
  */
 @Data
 @NoArgsConstructor
@@ -41,10 +41,33 @@ public class EventDTO {
 
     private String userId;
 
+    // Campo Legacy/Visualizzazione: usato come etichetta (es. "Ubuntu 22.04")
+    private String operatingSystem;
+
     @Size(max = 1000, message = "Custom parameters cannot exceed 1000 characters")
     private String customParameters; // JSON string storing custom parameter values
 
     // Additional fields for the frontend
     private String userName;
     private String resourceName;
+
+    // --- NUOVI CAMPI PER LA LOGICA DI PROVISIONING (Metal3) ---
+
+    // Discriminatore: "STANDARD", "FAVORITE", "CUSTOM" (o null)
+    private String osSelectionType;
+
+    // SCENARIO 1: ISO GESTITA (STANDARD) -> ID tabella iso_images
+    private Long selectedIsoId;
+
+    // SCENARIO 2: ISO PREFERITA (FAVORITE) -> ID tabella user_iso_favorites
+    private Long selectedFavoriteId;
+
+    // SCENARIO 3: URL CUSTOM (CUSTOM) -> Stringhe crude
+    private String customImageUrl;
+    private String customChecksumUrl;
+    private String customChecksumType; // es. "sha256"
+
+    // FLAGS PER SALVATAGGIO PREFERITI (Solo se osSelectionType == CUSTOM)
+    private Boolean saveAsFavorite; 
+    private String favoriteAlias;   
 }

@@ -9,7 +9,9 @@ import it.polito.cloudresources.be.dto.users.SshKeyDTO;
 import it.polito.cloudresources.be.dto.users.UpdateProfileDTO;
 import it.polito.cloudresources.be.dto.users.UpdateUserDTO;
 import it.polito.cloudresources.be.dto.users.UserDTO;
+import it.polito.cloudresources.be.service.KeycloakService;
 import it.polito.cloudresources.be.service.SiteService;
+import it.polito.cloudresources.be.service.SshKeyService;
 import it.polito.cloudresources.be.service.UserService;
 import it.polito.cloudresources.be.util.ControllerUtils;
 
@@ -26,7 +28,6 @@ import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
-import java.util.Optional;
 
 /**
  * REST API controller for managing users (fully integrated with Keycloak)
@@ -40,15 +41,14 @@ public class UserController {
 
     private final UserService userService;
     private final SiteService siteService;
+    private final KeycloakService keycloakService;
+    private final SshKeyService sshKeyService;
     private final ControllerUtils utils;
 
-    /**
-     * Get all users with optional site filtering
-     *
-     * @param siteId Optional site ID to filter by
-     * @param authentication User authentication object
-     * @return List of users based on access permissions
-     */
+    // ==========================================
+    // BASIC USER MANAGEMENT
+    // ==========================================
+
     @GetMapping
     @Operation(summary = "Get all users", description = "Retrieves all users with optional site filtering")
     public ResponseEntity<List<UserDTO>> getAllUsers(
@@ -68,12 +68,6 @@ public class UserController {
         }
     }
 
-    /**
-     * Get user by ID (admin only)
-     *
-     * @param id The Keycloak user ID
-     * @return The requested user or 404 if not found
-     */
     @GetMapping("/{id}")
     @Operation(summary = "Get user by ID", description = "Retrieves a specific user by their ID (Admin only)")
     public ResponseEntity<UserDTO> getUserById(@PathVariable String id, Authentication authentication) {
@@ -87,12 +81,6 @@ public class UserController {
         }
     }
 
-    /**
-     * Get current user's profile
-     *
-     * @param authentication User authentication object
-     * @return The current user's profile
-     */
     @GetMapping("/me")
     @Operation(summary = "Get current user", description = "Retrieves the profile of the currently authenticated user")
     public ResponseEntity<UserDTO> getCurrentUser(Authentication authentication) {
@@ -108,12 +96,6 @@ public class UserController {
         }
     }
 
-    /**
-     * Create a new user (admin only)
-     *
-     * @param createUserDTO The user creation data
-     * @return The created user or error response
-     */
     @PostMapping
     @Operation(summary = "Create user", description = "Creates a new user (Admin only)")
     public ResponseEntity<Object> createUser(@Valid @RequestBody CreateUserDTO createUserDTO, Authentication authentication) {
@@ -132,13 +114,6 @@ public class UserController {
         }
     }
 
-    /**
-     * Update an existing user (admin only)
-     *
-     * @param id The Keycloak user ID
-     * @param updateUserDTO The user update data
-     * @return The updated user or error response
-     */
     @PutMapping("/{id}")
     @Operation(summary = "Update user", description = "Updates an existing user (Admin only)")
     public ResponseEntity<Object> updateUser(
@@ -156,13 +131,6 @@ public class UserController {
         }
     }
 
-    /**
-     * Update current user's profile
-     *
-     * @param updateProfileDTO The profile update data
-     * @param authentication User authentication object
-     * @return The updated profile or error response
-     */
     @PutMapping("/me")
     @Operation(summary = "Update profile", description = "Updates the current user's profile")
     public ResponseEntity<Object> updateProfile(
@@ -181,36 +149,22 @@ public class UserController {
         }
     }
 
-    /**
-     * Delete user (admin only)
-     *
-     * @param id The Keycloak user ID
-     * @return Success response or error
-     */
     @DeleteMapping("/{id}")
     @Operation(summary = "Delete user", description = "Deletes an existing user (Admin only)")
     public ResponseEntity<Object> deleteUser(@PathVariable String id, Authentication authentication) {
         try {
             String currentKeycloakUserId = utils.getCurrentUserKeycloakId(authentication);
             userService.deleteUser(id, currentKeycloakUserId);
-
             return utils.createSuccessResponse("User deleted successfully");
         } catch (AccessDeniedException e) {
             return utils.createErrorResponse(HttpStatus.FORBIDDEN, e.getMessage());
         } catch (EntityNotFoundException e) {
             return utils.createErrorResponse(HttpStatus.NOT_FOUND, e.getMessage());
         } catch (Exception e) {
-            return utils.createErrorResponse(HttpStatus.INTERNAL_SERVER_ERROR,
-                    "Failed to delete user: " + e.getMessage());
+            return utils.createErrorResponse(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to delete user: " + e.getMessage());
         }
     }
 
-    /**
-     * Get users by role (admin only)
-     *
-     * @param role The role to filter by
-     * @return List of users with the specified role
-     */
     @GetMapping("/by-role/{role}")
     @Operation(summary = "Get users by role", description = "Retrieves users with a specific role (Admin only)")
     public ResponseEntity<List<UserDTO>> getUsersByRole(@PathVariable String role, Authentication authentication) {
@@ -225,73 +179,101 @@ public class UserController {
         }
     }
 
-    /**
-     * Get current user's SSH key
-     *
-     * @param authentication User authentication object
-     * @return The SSH key or null
-     */
-    @GetMapping("/me/ssh-key")
-    @Operation(summary = "Get SSH key", description = "Retrieves the current user's SSH public key")
-    public ResponseEntity<Object> getSshKey(Authentication authentication) {
-        String keycloakId = utils.getCurrentUserKeycloakId(authentication);
+    // ==========================================
+    // SSH WALLET ENDPOINTS (Multi-Key)
+    // ==========================================
 
-        Optional<String> sshKey = userService.getUserSshKey(keycloakId);
-
-        SshKeyDTO response = new SshKeyDTO(sshKey.orElse(null));
-        return ResponseEntity.ok(response);
-    }
-
-    /**
-     * Delete current user's SSH key
-     *
-     * @param authentication User authentication object
-     * @return Success response or error
-     */
-    @DeleteMapping("/me/ssh-key")
-    @Operation(summary = "Delete SSH key", description = "Deletes the current user's SSH public key")
-    public ResponseEntity<Object> deleteSshKey(Authentication authentication) {
+    @GetMapping("/me/ssh-keys")
+    @Operation(summary = "Get Key Wallet", description = "Retrieves all SSH keys in the user's wallet")
+    public ResponseEntity<List<SshKeyDTO>> getWalletKeys(Authentication authentication) {
         try {
             String keycloakId = utils.getCurrentUserKeycloakId(authentication);
-
-            boolean deleted = userService.deleteUserSshKey(keycloakId);
-            if (!deleted) {
-                return utils.createErrorResponse(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to delete SSH key");
-            }
-
-            return utils.createSuccessResponse("SSH key deleted successfully");
+            return ResponseEntity.ok(sshKeyService.getAllUserKeys(keycloakId));
         } catch (Exception e) {
-            return utils.createErrorResponse(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to delete SSH key: " + e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
     }
 
-    /**
-     * Update current user's SSH key
-     *
-     * @param sshKeyDTO The SSH key DTO containing the new key
-     * @param authentication User authentication object
-     * @return Success response or error
-     */
-    @PutMapping("/me/ssh-key") 
-    @Operation(summary = "Update SSH key", description = "Updates the current user's SSH public key")
-    public ResponseEntity<Object> updateSshKey(
-            @Valid @RequestBody SshKeyDTO sshKeyDTO,
+    @PostMapping("/me/ssh-keys")
+    @Operation(summary = "Add Key to Wallet", description = "Adds a new SSH key to the wallet")
+    public ResponseEntity<SshKeyDTO> addWalletKey(
+            @Valid @RequestBody SshKeyDTO keyDTO,
             Authentication authentication) {
+
+        String keycloakId = utils.getCurrentUserKeycloakId(authentication);
+        SshKeyDTO created = sshKeyService.addWalletKey(keycloakId, keyDTO, keycloakId);
+        return ResponseEntity.status(HttpStatus.CREATED).body(created);
+    }
+
+    @DeleteMapping("/me/ssh-keys/{id}")
+    @Operation(summary = "Delete Key from Wallet", description = "Removes a specific key from the wallet by ID")
+    public ResponseEntity<Object> deleteWalletKey(
+            @PathVariable Long id,
+            Authentication authentication) {
+
         try {
             String keycloakId = utils.getCurrentUserKeycloakId(authentication);
-            
-            // Create a profile DTO with just the SSH key field
-            UpdateProfileDTO updateProfileDTO = new UpdateProfileDTO();
-            updateProfileDTO.setSshPublicKey(sshKeyDTO.getSshPublicKey());
-            
-            userService.updateProfile(keycloakId, updateProfileDTO);
-            return utils.createSuccessResponse("SSH key updated successfully");
-        } catch (IllegalArgumentException e) {
-            return utils.createErrorResponse(HttpStatus.BAD_REQUEST, e.getMessage());
-        } catch (EntityNotFoundException e) {
-            return utils.createErrorResponse(HttpStatus.NOT_FOUND, "User not found");
+            boolean deleted = sshKeyService.deleteWalletKey(id, keycloakId);
+            if (!deleted) {
+                return utils.createErrorResponse(HttpStatus.NOT_FOUND, "Key not found or access denied");
+            }
+            return utils.createSuccessResponse("Key deleted successfully");
         } catch (Exception e) {
-            return utils.createErrorResponse(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to update SSH key: " + e.getMessage());
+            return utils.createErrorResponse(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to delete key: " + e.getMessage());
+        }
+    }
+
+    @PutMapping("/me/ssh-keys/{id}")
+    @Operation(summary = "Update Key in Wallet", description = "Updates a specific SSH key in the wallet by ID")
+    public ResponseEntity<SshKeyDTO> updateWalletKey(
+            @PathVariable Long id,
+            @Valid @RequestBody SshKeyDTO keyDTO,
+            Authentication authentication) {
+
+        String keycloakId = utils.getCurrentUserKeycloakId(authentication);
+        SshKeyDTO updated = sshKeyService.updateSshKey(id, keycloakId, keyDTO);
+        return ResponseEntity.ok(updated);
+    }
+
+    // ==========================================
+    // ROLE MANAGEMENT (Custom ISO)
+    // ==========================================
+
+    @PutMapping("/{id}/roles/custom-iso-uploader")
+    @Operation(summary = "Assign Custom ISO Role", description = "Grants the user permission to use custom ISO URLs (Admin only)")
+    public ResponseEntity<Object> assignCustomIsoRole(@PathVariable String id, Authentication authentication) {
+        try {
+            String adminId = utils.getCurrentUserKeycloakId(authentication);
+            if (!keycloakService.hasGlobalAdminRole(adminId)) {
+                return utils.createErrorResponse(HttpStatus.FORBIDDEN, "Only global admins can manage user roles");
+            }
+            boolean success = keycloakService.assignRoleToUser(id, "custom-iso-uploader");
+            if (success) {
+                return utils.createSuccessResponse("Role 'custom-iso-uploader' assigned successfully");
+            } else {
+                return utils.createErrorResponse(HttpStatus.BAD_REQUEST, "Failed to assign role");
+            }
+        } catch (Exception e) {
+            return utils.createErrorResponse(HttpStatus.INTERNAL_SERVER_ERROR, "Error: " + e.getMessage());
+        }
+    }
+
+    @DeleteMapping("/{id}/roles/custom-iso-uploader")
+    @Operation(summary = "Remove Custom ISO Role", description = "Revokes the user permission to use custom ISO URLs (Admin only)")
+    public ResponseEntity<Object> removeCustomIsoRole(@PathVariable String id, Authentication authentication) {
+        try {
+            String adminId = utils.getCurrentUserKeycloakId(authentication);
+            if (!keycloakService.hasGlobalAdminRole(adminId)) {
+                return utils.createErrorResponse(HttpStatus.FORBIDDEN, "Only global admins can manage user roles");
+            }
+            boolean success = keycloakService.removeRoleFromUser(id, "custom-iso-uploader");
+            if (success) {
+                return utils.createSuccessResponse("Role 'custom-iso-uploader' removed successfully");
+            } else {
+                return utils.createErrorResponse(HttpStatus.BAD_REQUEST, "Failed to remove role");
+            }
+        } catch (Exception e) {
+            return utils.createErrorResponse(HttpStatus.INTERNAL_SERVER_ERROR, "Error: " + e.getMessage());
         }
     }
 }

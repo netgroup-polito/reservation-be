@@ -25,9 +25,14 @@ public class SshKey {
     @GeneratedValue
     private Long id;
     
-    @Column(name = "user_id", nullable = false, unique = true)
+    // REMOVED "unique = true" to allow 1:N relationship (multiple keys per user)
+    @Column(name = "user_id", nullable = false)
     private String userId;
     
+    // NEW FIELD: Label to identify the key (e.g., "Laptop", "Default")
+    @Column(name = "label")
+    private String label;
+
     @Column(name = "ssh_key", nullable = false, length = 4000)
     private String sshKey;
     
@@ -42,4 +47,13 @@ public class SshKey {
     
     @Column(name = "updated_by", nullable = false)
     private String updatedBy;
+
+    // Helper to ensure backward compatibility (if label is null -> "Default")
+    @jakarta.persistence.PrePersist
+    @jakarta.persistence.PreUpdate
+    public void ensureLabel() {
+        if (this.label == null || this.label.trim().isEmpty()) {
+            this.label = "Default";
+        }
+    }
 }
