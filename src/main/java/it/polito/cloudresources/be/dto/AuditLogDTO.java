@@ -29,7 +29,7 @@ public class AuditLogDTO {
     private AuditLog.LogSeverity severity;
 
     // Calculated field for display in UI
-    private String shortDetails;
+    //private String shortDetails;
 
     public String getShortDetails() {
         if (details == null || details.length() <= 50) {

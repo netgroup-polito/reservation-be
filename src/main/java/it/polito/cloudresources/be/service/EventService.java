@@ -559,32 +559,6 @@ public class EventService {
         return keycloakService.isUserInGroup(userId, siteId);
     }
 
-    /**
-     * HELPER: Validate if user has permission to use a Custom ISO URL.
-     * Throws AccessDeniedException if validation fails.
-     */
-    private void validateCustomIsoPermission(String os, String userId) {
-        // If OS is not specified or is not a URL (http/https), it's a standard image. Allowed.
-        if (os == null || (!os.startsWith("http://") && !os.startsWith("https://"))) {
-            return;
-        }
-
-        // It is a URL. Check permissions.
-        
-        // 1. Global Admins are always allowed
-        if (keycloakService.hasGlobalAdminRole(userId)) {
-            return;
-        }
-
-        // 2. Check for specific Role 'custom-iso-uploader' using the optimized method
-        if (keycloakService.hasRole(userId, ROLE_CUSTOM_ISO_UPLOADER)) {
-            return; // Access Granted
-        }
-
-        // If we are here, access is denied.
-        log.warn("User {} attempted to use custom ISO URL without permission: {}", userId, os);
-        throw new AccessDeniedException("You do not have permission to use Custom Image URLs. Required role: " + ROLE_CUSTOM_ISO_UPLOADER);
-    }
 
     /**
      * Create a deep clone (UPDATED)
@@ -605,13 +579,6 @@ public class EventService {
         // Copy audit fields from parent class
         clone.setCreatedAt(original.getCreatedAt());
         clone.setUpdatedAt(original.getUpdatedAt());
-
-        // --- COPY NEW FIELDS FOR WEBHOOK ---
-        clone.setOperatingSystem(original.getOperatingSystem());
-        clone.setImageUrl(original.getImageUrl());
-        clone.setChecksumUrl(original.getChecksumUrl());
-        clone.setChecksumType(original.getChecksumType());
-        // -----------------------------------
         
         // Create a safe copy of the resource that avoids lazy loading issues
         if (original.getResource() != null) {

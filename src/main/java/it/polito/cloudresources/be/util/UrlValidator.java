@@ -1,13 +1,12 @@
 package it.polito.cloudresources.be.util;
 
 import java.net.HttpURLConnection;
+import java.net.URI; // AGGIUNGI QUESTO
 import java.net.URL;
 
 public class UrlValidator {
 
-    // Rimuoviamo la Regex complessa statica che causava l'ExceptionInInitializerError
-    
-    // Controllo Sintattico (Semplificato)
+    // Controllo Sintattico (Moderno Java 21+)
     public static boolean isValidSyntax(String urlString) {
         if (urlString == null || urlString.isBlank()) return false;
         
@@ -16,9 +15,11 @@ public class UrlValidator {
             return false;
         }
 
-        // 2. Deve essere parsabile dalla classe URL di Java
+        // 2. Parsabile dalla classe URI (Standard moderno)
         try {
-            new URL(urlString).toURI();
+            // Prima costruiamo l'URI (che valida la sintassi RFC 2396)
+            // e poi lo convertiamo in URL (che valida il protocollo)
+            new URI(urlString).toURL();
             return true;
         } catch (Exception e) {
             return false;
@@ -27,26 +28,25 @@ public class UrlValidator {
 
     // Controllo Fisico (Ping / Reachability)
     public static void checkUrlReachable(String urlString) {
-        // Controllo sintassi base
         if (!isValidSyntax(urlString)) {
             throw new IllegalArgumentException("Formato URL non valido: deve iniziare con http:// o https://");
         }
 
         try {
-            URL url = new URL(urlString);
+            // Usiamo il nuovo approccio anche qui
+            URL url = new URI(urlString).toURL();
             HttpURLConnection huc = (HttpURLConnection) url.openConnection();
             
-            // Impostiamo un User-Agent generico per evitare che alcuni server ci blocchino pensando siamo un bot
+            // Impostiamo un User-Agent generico
             huc.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
             
-            huc.setRequestMethod("HEAD"); // Scarica solo l'intestazione
-            huc.setConnectTimeout(3000);  // 3 secondi max per connettersi
+            huc.setRequestMethod("HEAD");
+            huc.setConnectTimeout(3000);
             huc.setReadTimeout(3000);
             
             int responseCode = huc.getResponseCode();
 
-            // Accettiamo 200 (OK), 301/302 (Redirect)
-            // Nota: Alcuni CDN restituiscono 403 o 405 sul metodo HEAD. Se vuoi essere più permissivo, accetta anche quelli.
+            // Accettiamo 200 (OK), 301/302 (Redirect), e scusiamo 403/405 (CDN restrittivi)
             if (responseCode >= 400 && responseCode != 403 && responseCode != 405) {
                 throw new IllegalArgumentException("URL irraggiungibile (Codice: " + responseCode + ")");
             }
