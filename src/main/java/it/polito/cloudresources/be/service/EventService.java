@@ -27,6 +27,9 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -423,7 +426,7 @@ public class EventService {
 
     /**
      * Delete event if the user has permission to do so
-     */
+     *
     @Transactional
     public boolean deleteEvent(Long id, String userId) {
         Optional<Event> eventOpt = eventRepository.findById(id);
@@ -460,7 +463,50 @@ public class EventService {
 
         return true;
     }
+        */
 
+    @Transactional
+    public boolean deleteEvent(Long id, String userId) {
+        Optional<Event> eventOpt = eventRepository.findById(id);
+        
+        if (!eventOpt.isPresent()) {
+            return false;
+        }
+        
+        Event event = eventOpt.get();
+        
+        // Check if user has permission to delete this event
+        if (!canModifyEvent(userId, event)) {
+            throw new AccessDeniedException("You don't have permission to delete this event");
+        }
+
+        // Store necessary data before deletion to avoid accessing deleted entity
+        String siteName = keycloakService.getSiteNameById(event.getResource().getSiteId(), "Unknown site");
+        
+        // Create a deep clone of the event for the webhook service to avoid accessing deleted entity
+        final Event eventClone = createEventClone(event);
+
+        // Delete the entity
+        eventRepository.deleteById(id);
+
+        // Log the audit action
+        auditLogService.logCrudAction(AuditLog.LogType.USER,
+                AuditLog.LogAction.DELETE,
+                new AuditLog.LogEntity("EVENT", id.toString()),
+                "User: " + userId + " deleted event: " + eventClone.toString(),
+                siteName);
+
+        // CRITICAL FIX: Ensure webhook is fired ONLY AFTER the transaction is fully committed to the DB
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                log.info("Transaction committed for deleted event {}. Firing webhook...", eventClone.getId());
+                webhookService.processResourceEvent(WebhookEventType.EVENT_DELETED, eventClone.getResource(), eventClone);
+            }
+        });
+
+        return true;
+    }
     /**
      * Check if there's a time conflict for a resource booking
      */
