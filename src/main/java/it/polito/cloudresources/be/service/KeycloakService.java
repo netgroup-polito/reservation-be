@@ -714,6 +714,12 @@ public class KeycloakService {
     }
 }
     
+    @Caching(evict = {
+        @CacheEvict(value = USERS_CACHE, allEntries = true),
+        @CacheEvict(value = USER_ROLES_CACHE, key = "#userId"),
+        @CacheEvict(value = USER_BY_ID_CACHE, key = "#userId"),
+        @CacheEvict(value = USER_BY_ROLE_CACHE, allEntries = true)
+    })
     public boolean assignRoleToUser(String userId, String roleName) {
         try {
             UserResource userResource = getRealmResource().users().get(userId);
@@ -743,6 +749,12 @@ public class KeycloakService {
         }
     }
 
+    @Caching(evict = {
+        @CacheEvict(value = USERS_CACHE, allEntries = true),
+        @CacheEvict(value = USER_ROLES_CACHE, key = "#userId"),
+        @CacheEvict(value = USER_BY_ID_CACHE, key = "#userId"),
+        @CacheEvict(value = USER_BY_ROLE_CACHE, allEntries = true)
+    })
     public boolean removeRoleFromUser(String userId, String roleName) {
         try {
             UserResource userResource = getRealmResource().users().get(userId);
