@@ -14,6 +14,13 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 @Builder(builderMethodName = "builder")
 public class SshKeyDTO {
+    
+    // The database ID of the key (useful for deletion)
+    private Long id;
+
+    // The friendly name of the key (e.g., "Work Laptop", "Default")
+    private String label;
+
     @NotNull(message = "SSH public key is required")
     private String sshPublicKey;
 

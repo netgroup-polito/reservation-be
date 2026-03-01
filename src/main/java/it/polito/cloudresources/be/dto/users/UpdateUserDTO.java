@@ -35,7 +35,7 @@ public class UpdateUserDTO {
 
     private String avatar;
 
-    private String sshPublicKey;
+    // RIMOSSO: private String sshPublicKey; -> Gestione tramite Wallet
 
     private Set<String> roles;
 

@@ -1,12 +1,18 @@
 package it.polito.cloudresources.be.service;
 
+import it.polito.cloudresources.be.model.IsoImage;
+import it.polito.cloudresources.be.model.UserIsoFavorite;
+import it.polito.cloudresources.be.repository.IsoImageRepository;
+import it.polito.cloudresources.be.repository.UserIsoFavoriteRepository;
+import it.polito.cloudresources.be.util.UrlValidator;
+
+
 import it.polito.cloudresources.be.dto.EventDTO;
 import it.polito.cloudresources.be.mapper.EventMapper;
 import it.polito.cloudresources.be.model.AuditLog;
 import it.polito.cloudresources.be.model.Event;
 import it.polito.cloudresources.be.model.Resource;
 import it.polito.cloudresources.be.model.ResourceStatus;
-import it.polito.cloudresources.be.model.ResourceType;
 import it.polito.cloudresources.be.model.WebhookEventType;
 import it.polito.cloudresources.be.repository.EventRepository;
 import it.polito.cloudresources.be.repository.ResourceRepository;
@@ -19,6 +25,7 @@ import org.keycloak.representations.idm.UserRepresentation;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
 
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
@@ -34,6 +41,8 @@ import java.util.stream.Collectors;
 @Slf4j
 public class EventService {
 
+    private final IsoImageRepository isoImageRepository;
+    private final UserIsoFavoriteRepository userIsoFavoriteRepository;
     private final EventRepository eventRepository;
     private final ResourceRepository resourceRepository;
     private final NotificationService notificationService;
@@ -43,14 +52,17 @@ public class EventService {
     private final WebhookService webhookService;
     private final EventMapper eventMapper;
     private final DateTimeUtils dateTimeUtils;
+    
+    // Role required to use custom ISO URLs
+    private static final String ROLE_CUSTOM_ISO_UPLOADER = "custom-iso-uploader";
 
     /**
      * Get all events based on user site access
      */
     public List<EventDTO> getAllEvents(String userId) {
         if (keycloakService.hasGlobalAdminRole(userId)) {
-            // Global admins see all events
-            return eventMapper.toDto(eventRepository.findAll());
+            // Global admins see all active events (excluding deleted ones)
+            return eventMapper.toDto(eventRepository.findAllActive()); 
         } else {
             // Site admins and regular users see only events for resources in their sites
             List<String> userSites = keycloakService.getUserSites(userId);
@@ -139,8 +151,7 @@ public class EventService {
         List<String> commonSites = adminSites.stream()
                 .filter(userSites::contains)
                 .collect(Collectors.toList());
-                
-
+        
         List<Event> userEvents = eventRepository.findBySiteIds(commonSites);
         if (userEvents.isEmpty()) {
             return new ArrayList<>();
@@ -157,7 +168,7 @@ public class EventService {
         ZonedDateTime normalizedStartDate = dateTimeUtils.ensureTimeZone(startDate);
         ZonedDateTime normalizedEndDate = dateTimeUtils.ensureTimeZone(endDate);
 
-        log.debug("getEventsByDateRange called for userId: {}", userId); // Log the incoming userId
+        log.debug("getEventsByDateRange called for userId: {}", userId);
 
         List<Event> events = eventRepository.findByDateRange(normalizedStartDate, normalizedEndDate);
 
@@ -169,8 +180,8 @@ public class EventService {
             accessibleEvents = events;
         } else {
             // Site users see only events for resources in their sites
-            log.debug("Attempting to fetch sites for user ID: {}", userId); // Log before the potentially failing call
-            List<String> userSites = keycloakService.getUserSites(userId); // This call might be failing
+            log.debug("Attempting to fetch sites for user ID: {}", userId);
+            List<String> userSites = keycloakService.getUserSites(userId);
 
             accessibleEvents = events.stream()
                     .filter(event -> userSites.contains(event.getResource().getSiteId()))
@@ -180,20 +191,18 @@ public class EventService {
         return eventMapper.toDto(accessibleEvents);
     }
 
+    
     /**
-     * Create new event
+     * Create new event (UPDATED)
      */
     @Transactional
     public EventDTO createEvent(EventDTO eventDTO, String userId) {
         log.debug("Creating event with DTO: {}", eventDTO);
 
-        eventDTO.setStart(dateTimeUtils.ensureTimeZone(eventDTO.getStart()));
-        eventDTO.setEnd(dateTimeUtils.ensureTimeZone(eventDTO.getEnd()));
-        // Set current time if not provided by frontend
+        // Ensure time zone info for start
         if (eventDTO.getStart() == null || eventDTO.getEnd() == null) {
             throw new IllegalStateException("Event must have a start end an end time");
         } else {
-            // Ensure time zone info for start
             eventDTO.setStart(dateTimeUtils.ensureTimeZone(eventDTO.getStart()));
             eventDTO.setEnd(dateTimeUtils.ensureTimeZone(eventDTO.getEnd()));
         }
@@ -202,7 +211,9 @@ public class EventService {
         if (eventDTO.getEnd().isBefore(eventDTO.getStart())) {
             throw new IllegalStateException("End time must be after start time");
         }
-        
+
+        // NOTA: Ho rimosso qui la vecchia validateCustomIsoPermission perché la facciamo dopo in modo più intelligente
+
         // Get the resource and check if user has access
         Resource resource = resourceRepository.findById(eventDTO.getResourceId())
                 .orElseThrow(() -> new EntityNotFoundException("Resource not found with ID: " + eventDTO.getResourceId()));
@@ -248,6 +259,11 @@ public class EventService {
             .orElseThrow(() -> new EntityNotFoundException("User not found with Keycloak ID: " + eventDTO.getUserId()));
         
         Event event = eventMapper.toEntity(eventDTO);
+        
+        // --- NUOVA LOGICA: Risoluzione URL Immagine ---
+        resolveProvisioningData(event, eventDTO, userId);
+        // ----------------------------------------------
+        
         Event savedEvent = eventRepository.save(event);
         
         log.debug("Saved event: {}", savedEvent);
@@ -270,7 +286,6 @@ public class EventService {
                 " to " + dateTimeUtils.formatDateTime(eventDTO.getEnd())
         );
         
-
         String siteName = keycloakService.getSiteNameById(savedEvent.getResource().getSiteId(), "Unknown site");
 
         auditLogService.logCrudAction(AuditLog.LogType.USER,
@@ -279,14 +294,14 @@ public class EventService {
                 "User: " + userId + " created event",
                 siteName);
                 
-
         webhookService.processResourceEvent(WebhookEventType.EVENT_CREATED, resource, savedEvent);
         
         return eventMapper.toDto(savedEvent);
     }
+    
 
     /**
-     * Update existing event
+     * Update existing event (UPDATED)
      */
     @Transactional
     public Optional<EventDTO> updateEvent(Long id, EventDTO eventDTO, String userId) {
@@ -318,6 +333,18 @@ public class EventService {
                         if (!resourceService.canAccessResource(userId, newResource)) {
                             throw new AccessDeniedException("You don't have access to the new resource");
                         }
+                        
+                         // Check if the new resource is in ACTIVE state
+                        if (newResource.getStatus() != ResourceStatus.ACTIVE) {
+                            throw new IllegalStateException("Cannot book a resource that is not in ACTIVE state.");
+                        }
+
+                        existingEvent.setResource(newResource);
+                    } else {
+                         // Also check if the existing resource is still ACTIVE
+                        if (existingEvent.getResource().getStatus() != ResourceStatus.ACTIVE) {
+                            throw new IllegalStateException("Cannot update booking for a resource that is not in ACTIVE state.");
+                        }
                     }
                     
                     // Update fields
@@ -328,6 +355,13 @@ public class EventService {
                     if (eventDTO.getDescription() != null) {
                         existingEvent.setDescription(eventDTO.getDescription());
                     }
+
+                    // --- NUOVA LOGICA UPDATE ---
+                    // Se c'è una nuova selezione OS, ricalcoliamo tutto
+                    if (eventDTO.getOsSelectionType() != null || eventDTO.getOperatingSystem() != null) {
+                         resolveProvisioningData(existingEvent, eventDTO, userId);
+                    }
+                    // ---------------------------
                     
                     // Only update start and end if provided
                     if (eventDTO.getStart() != null) {
@@ -347,24 +381,6 @@ public class EventService {
                     Long resourceId = eventDTO.getResourceId() != null ? eventDTO.getResourceId() : existingEvent.getResource().getId();
                     if (hasTimeConflict(resourceId, existingEvent.getStart(), existingEvent.getEnd(), id)) {
                         throw new IllegalStateException("The selected time period conflicts with existing bookings");
-                    }
-                    
-                    // Update resource if changed
-                    if (eventDTO.getResourceId() != null && !existingEvent.getResource().getId().equals(eventDTO.getResourceId())) {
-                        Resource newResource = resourceRepository.findById(eventDTO.getResourceId())
-                                .orElseThrow(() -> new EntityNotFoundException("Resource not found"));
-                        
-                        // Check if the new resource is in ACTIVE state
-                        if (newResource.getStatus() != ResourceStatus.ACTIVE) {
-                            throw new IllegalStateException("Cannot book a resource that is not in ACTIVE state. Current state: " + newResource.getStatus());
-                        }
-                        
-                        existingEvent.setResource(newResource);
-                    } else {
-                        // Also check if the existing resource is still ACTIVE
-                        if (existingEvent.getResource().getStatus() != ResourceStatus.ACTIVE) {
-                            throw new IllegalStateException("Cannot update booking for a resource that is not in ACTIVE state. Current state: " + existingEvent.getResource().getStatus());
-                        }
                     }
                     
                     // Update user (Keycloak ID) if provided and requester is admin
@@ -405,8 +421,11 @@ public class EventService {
                 });
     }
 
+    
+
     /**
-     * Delete event if the user has permission to do so
+     * Mark event for deletion (Logical Delete).
+     * The Event Processor will handle the webhook and physical deletion.
      */
     @Transactional
     public boolean deleteEvent(Long id, String userId) {
@@ -423,28 +442,25 @@ public class EventService {
             throw new AccessDeniedException("You don't have permission to delete this event");
         }
 
-        // Store necessary data before deletion to avoid accessing deleted entity
         String siteName = keycloakService.getSiteNameById(event.getResource().getSiteId(), "Unknown site");
         
-        // Create a deep clone of the event for the webhook service to avoid accessing deleted entity
-        Event eventClone = createEventClone(event);
-
-        // Delete the entity first to avoid transaction conflicts
-        eventRepository.deleteById(id);
-
-        // Log the audit action after successful deletion
+        // --- NUOVA LOGICA: CANCELLAZIONE LOGICA ---
+        // Invece di cancellare fisicamente, impostiamo il flag. 
+        // L'Event Processor leggerà questo flag, invierà il Webhook e pulirà il DB.
+        event.setDeleted(true);
+        eventRepository.save(event);
+        
+        // Log the audit action
         auditLogService.logCrudAction(AuditLog.LogType.USER,
                 AuditLog.LogAction.DELETE,
                 new AuditLog.LogEntity("EVENT", id.toString()),
-                "User: " + userId + " deleted event: " + eventClone.toString(),
+                "User: " + userId + " marked event for deletion: " + event.getTitle(),
                 siteName);
 
-        // Process webhook asynchronously after deletion is committed
-        webhookService.processResourceEvent(WebhookEventType.EVENT_DELETED, eventClone.getResource(), eventClone);
+        log.info("Event {} marked as deleted by user {}. Awaiting Event Processor cleanup.", id, userId);
 
         return true;
     }
-
     /**
      * Check if there's a time conflict for a resource booking
      */
@@ -543,57 +559,100 @@ public class EventService {
         return keycloakService.isUserInGroup(userId, siteId);
     }
 
-    /**
-     * Create a deep clone of an event object to avoid issues with accessing deleted entities
-     * This is particularly useful for webhook processing after event deletion
-     */
-    private Event createEventClone(Event original) {
-        Event clone = new Event();
-        
-        // Copy all primitive fields
-        clone.setId(original.getId()); // Include the ID for logging purposes
-        clone.setTitle(original.getTitle());
-        clone.setDescription(original.getDescription());
-        clone.setStart(original.getStart());
-        clone.setEnd(original.getEnd());
-        clone.setKeycloakId(original.getKeycloakId());
-        clone.setStartNotifiedAt(original.getStartNotifiedAt());
-        clone.setEndNotifiedAt(original.getEndNotifiedAt());
-        
-        // Copy audit fields from parent class
-        clone.setCreatedAt(original.getCreatedAt());
-        clone.setUpdatedAt(original.getUpdatedAt());
-        
-        // Create a safe copy of the resource that avoids lazy loading issues
-        if (original.getResource() != null) {
-            Resource originalResource = original.getResource();
-            Resource resourceClone = new Resource();
-            
-            // Copy basic resource fields without lazy collections
-            resourceClone.setId(originalResource.getId());
-            resourceClone.setName(originalResource.getName());
-            resourceClone.setSpecs(originalResource.getSpecs());
-            resourceClone.setLocation(originalResource.getLocation());
-            resourceClone.setStatus(originalResource.getStatus());
-            resourceClone.setSiteId(originalResource.getSiteId());
-            
-            // Create a safe copy of the resource type without lazy collections
-            if (originalResource.getType() != null) {
-                ResourceType originalType = originalResource.getType();
-                ResourceType typeClone = new ResourceType();
-                typeClone.setId(originalType.getId());
-                typeClone.setName(originalType.getName());
-                typeClone.setColor(originalType.getColor());
-                typeClone.setSiteId(originalType.getSiteId());
-                // Don't copy the resources collection to avoid lazy loading issues
-                resourceClone.setType(typeClone);
+
+    // --- NUOVA LOGICA CORE: RISOLUZIONE URL E CHECKSUM ---
+    
+    private void resolveProvisioningData(Event event, EventDTO dto, String userId) {
+        // Se non c'è il discriminatore, fallback alla vecchia logica (solo label testuale)
+        if (dto.getOsSelectionType() == null) {
+            if (dto.getOperatingSystem() != null) {
+                event.setOperatingSystem(dto.getOperatingSystem());
             }
-            
-            // Don't copy collections (subResources, events) to avoid lazy loading issues
-            clone.setResource(resourceClone);
+            return;
         }
-        
-        return clone;
+
+        switch (dto.getOsSelectionType()) {
+            case "STANDARD":
+                // Caso 1: Immagine gestita dall'Admin
+                if (dto.getSelectedIsoId() == null) {
+                     throw new IllegalArgumentException("Selected ISO ID is mandatory for STANDARD type");
+                }
+                IsoImage iso = isoImageRepository.findById(dto.getSelectedIsoId())
+                        .orElseThrow(() -> new EntityNotFoundException("Selected ISO Image not found"));
+                
+                if (!iso.getIsActive()) throw new IllegalStateException("Selected ISO is not active");
+                if (iso.getImageUrl() == null || iso.getImageUrl().isBlank()) throw new IllegalStateException("Selected ISO has no URL configured");
+
+                event.setImageUrl(iso.getImageUrl());
+                event.setChecksumUrl(iso.getChecksumUrl());
+                event.setChecksumType(iso.getChecksumType());
+                event.setOperatingSystem(iso.getDisplayName()); // Label UI
+                break;
+
+            case "FAVORITE":
+                // Caso 2: Preferito dell'Utente
+                if (dto.getSelectedFavoriteId() == null) {
+                    throw new IllegalArgumentException("Selected Favorite ID is mandatory for FAVORITE type");
+                }
+                UserIsoFavorite fav = userIsoFavoriteRepository.findById(dto.getSelectedFavoriteId())
+                        .orElseThrow(() -> new EntityNotFoundException("Favorite not found"));
+
+                // Security check: il preferito deve essere mio
+                if (!fav.getUserId().equals(userId)) {
+                    throw new AccessDeniedException("You cannot use a favorite that belongs to another user");
+                }
+
+                event.setImageUrl(fav.getImageUrl());
+                event.setChecksumUrl(fav.getChecksumUrl());
+                event.setChecksumType("sha256");
+                event.setOperatingSystem(fav.getAlias()); // Label UI
+                break;
+
+            case "CUSTOM":
+                // Caso 3: URL Custom (Power User)
+                // 1. Validazione Formato (CORRETTO QUI: isValidSyntax invece di isValidUrl)
+                if (!UrlValidator.isValidSyntax(dto.getCustomImageUrl())) {
+                    throw new IllegalArgumentException("Invalid Custom Image URL format");
+                }
+                if (dto.getCustomChecksumUrl() != null && !dto.getCustomChecksumUrl().isBlank() && !UrlValidator.isValidSyntax(dto.getCustomChecksumUrl())) {
+                     throw new IllegalArgumentException("Invalid Custom Checksum URL format");
+                }
+
+                // 2. Controllo Permessi
+                boolean isGlobalAdmin = keycloakService.hasGlobalAdminRole(userId);
+                boolean hasCustomRole = keycloakService.hasRole(userId, ROLE_CUSTOM_ISO_UPLOADER);
+                
+                if (!isGlobalAdmin && !hasCustomRole) {
+                     throw new AccessDeniedException("You do not have permission to use Custom Image URLs. Required role: " + ROLE_CUSTOM_ISO_UPLOADER);
+                }
+
+                // 3. Set Dati Evento
+                event.setImageUrl(dto.getCustomImageUrl());
+                event.setChecksumUrl(dto.getCustomChecksumUrl());
+                event.setChecksumType(dto.getCustomChecksumType() != null ? dto.getCustomChecksumType() : "sha256");
+                event.setOperatingSystem("Custom: " + (dto.getFavoriteAlias() != null ? dto.getFavoriteAlias() : "User defined"));
+
+                // 4. Salvataggio nei preferiti (Opzionale)
+                if (Boolean.TRUE.equals(dto.getSaveAsFavorite()) && dto.getFavoriteAlias() != null && !dto.getFavoriteAlias().isBlank()) {
+                    saveNewFavorite(userId, dto.getFavoriteAlias(), dto.getCustomImageUrl(), dto.getCustomChecksumUrl());
+                }
+                break;
+
+            default:
+                throw new IllegalArgumentException("Unknown OS Selection Type: " + dto.getOsSelectionType());
+        }
+    }
+    
+    private void saveNewFavorite(String userId, String alias, String url, String checksum) {
+        // Evita duplicati di nome per lo stesso user
+        if (!userIsoFavoriteRepository.existsByUserIdAndAlias(userId, alias)) {
+            UserIsoFavorite fav = new UserIsoFavorite();
+            fav.setUserId(userId);
+            fav.setAlias(alias);
+            fav.setImageUrl(url);
+            fav.setChecksumUrl(checksum);
+            userIsoFavoriteRepository.save(fav);
+        }
     }
 
 }

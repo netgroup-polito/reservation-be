@@ -7,7 +7,6 @@ import it.polito.cloudresources.be.dto.users.UpdateUserDTO;
 import it.polito.cloudresources.be.dto.users.UserDTO;
 import it.polito.cloudresources.be.mapper.UserMapper;
 import it.polito.cloudresources.be.model.AuditLog;
-import it.polito.cloudresources.be.util.SshKeyValidator;
 import jakarta.persistence.EntityExistsException;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
@@ -19,6 +18,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.*;
+
 /**
  * Service for user operations, using Keycloak as the source of truth
  */
@@ -31,8 +31,9 @@ public class UserService {
     private final AuditLogService auditLogService;
     private final EventService eventService;
     private final UserMapper userMapper;
-    private final SshKeyValidator sshKeyValidator;
-    private final SshKeyService sshKeyService;
+
+    // RIMOSSI: SshKeyService e SshKeyValidator non servono più qui.
+    // La gestione delle chiavi è delegata interamente al Wallet.
 
     /**
      * Get all users
@@ -79,9 +80,8 @@ public class UserService {
             throw new EntityNotFoundException("User not found");
         }
 
-        UserDTO userDto = userMapper.toDto(userRepresentation.get());
-        userDto.setSshPublicKey(sshKeyService.getUserSshKey(id).orElse(null));
-        return userDto;
+        // RIMOSSO: userDto.setSshPublicKey(...) -> Le chiavi non sono più nel DTO utente
+        return userMapper.toDto(userRepresentation.get());
     }
 
     /**
@@ -133,7 +133,7 @@ public class UserService {
                 .firstName(createUserDTO.getFirstName())
                 .lastName(createUserDTO.getLastName())
                 .avatar(createUserDTO.getAvatar())
-                .sshPublicKey(createUserDTO.getSshPublicKey())
+                // RIMOSSO: .sshPublicKey(...) -> Non si salva più in creazione
                 .roles(createUserDTO.getRoles())
                 .withGeneratedAvatarIfEmpty()
                 .withNormalizedEmail()
@@ -196,10 +196,7 @@ public class UserService {
             attributes.put(KeycloakService.ATTR_AVATAR, updateUserDTO.getAvatar());
         }
 
-        if (updateUserDTO.getSshPublicKey() != null) {
-            // Save SSH key in the database instead of Keycloak
-            sshKeyService.saveUserSshKey(id, updateUserDTO.getSshPublicKey(), requesterUserId);
-        }
+        // RIMOSSO: Blocco if (updateUserDTO.getSshPublicKey() != null)
 
         if (updateUserDTO.getRoles() != null) {
             attributes.put("roles", new ArrayList<>(updateUserDTO.getRoles()));
@@ -245,12 +242,7 @@ public class UserService {
             attributes.put(KeycloakService.ATTR_AVATAR, profileDTO.getAvatar());
         }
 
-        if (profileDTO.getSshPublicKey() != null) {
-            String sshPublicKey = sshKeyValidator.formatSshKey(profileDTO.getSshPublicKey());
-            sshKeyValidator.isValidSshPublicKey(sshPublicKey);
-            // Save SSH key in the database instead of Keycloak
-            sshKeyService.saveUserSshKey(id, sshPublicKey, id);
-        }
+        // RIMOSSO: Blocco if (profileDTO.getSshPublicKey() != null)
 
         if (profileDTO.getPassword() != null && !profileDTO.getPassword().isEmpty()) {
             attributes.put("password", profileDTO.getPassword());
@@ -264,7 +256,7 @@ public class UserService {
         auditLogService.logCrudAction(AuditLog.LogType.USER,
                 AuditLog.LogAction.UPDATE,
                 new AuditLog.LogEntity("USER", id),
-                "User profile updated"); //Do not include sensitive information
+                "User profile updated"); 
 
         // Retrieve and return the updated user
         return keycloakService.getUserById(id)
@@ -323,21 +315,5 @@ public class UserService {
         return userMapper.toDto(keycloakService.getUsersByRole(role));
     }
 
-    /**
-     * Get user SSH key
-     * @param id The Keycloak user ID
-     * @return Optional containing the SSH key if found
-     */
-    public Optional<String> getUserSshKey(String id) {
-        return sshKeyService.getUserSshKey(id);
-    }
-
-    /**
-     * Delete user SSH key
-     * @param id The Keycloak user ID
-     * @return true if deleted successfully, false otherwise
-     */
-    public boolean deleteUserSshKey(String id) {
-        return sshKeyService.deleteUserSshKey(id);
-    }
+    // RIMOSSI METODI LEGACY SSH (getUserSshKey, deleteUserSshKey)
 }
