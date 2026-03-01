@@ -13,7 +13,6 @@ import it.polito.cloudresources.be.model.AuditLog;
 import it.polito.cloudresources.be.model.Event;
 import it.polito.cloudresources.be.model.Resource;
 import it.polito.cloudresources.be.model.ResourceStatus;
-import it.polito.cloudresources.be.model.ResourceType;
 import it.polito.cloudresources.be.model.WebhookEventType;
 import it.polito.cloudresources.be.repository.EventRepository;
 import it.polito.cloudresources.be.repository.ResourceRepository;
@@ -27,8 +26,6 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
@@ -64,8 +61,8 @@ public class EventService {
      */
     public List<EventDTO> getAllEvents(String userId) {
         if (keycloakService.hasGlobalAdminRole(userId)) {
-            // Global admins see all events
-            return eventMapper.toDto(eventRepository.findAll());
+            // Global admins see all active events (excluding deleted ones)
+            return eventMapper.toDto(eventRepository.findAllActive()); 
         } else {
             // Site admins and regular users see only events for resources in their sites
             List<String> userSites = keycloakService.getUserSites(userId);
@@ -424,9 +421,12 @@ public class EventService {
                 });
     }
 
+    
+
     /**
-     * Delete event if the user has permission to do so
-     *
+     * Mark event for deletion (Logical Delete).
+     * The Event Processor will handle the webhook and physical deletion.
+     */
     @Transactional
     public boolean deleteEvent(Long id, String userId) {
         Optional<Event> eventOpt = eventRepository.findById(id);
@@ -442,68 +442,22 @@ public class EventService {
             throw new AccessDeniedException("You don't have permission to delete this event");
         }
 
-        // Store necessary data before deletion to avoid accessing deleted entity
         String siteName = keycloakService.getSiteNameById(event.getResource().getSiteId(), "Unknown site");
         
-        // Create a deep clone of the event for the webhook service to avoid accessing deleted entity
-        Event eventClone = createEventClone(event);
-
-        // Delete the entity first to avoid transaction conflicts
-        eventRepository.deleteById(id);
-
-        // Log the audit action after successful deletion
-        auditLogService.logCrudAction(AuditLog.LogType.USER,
-                AuditLog.LogAction.DELETE,
-                new AuditLog.LogEntity("EVENT", id.toString()),
-                "User: " + userId + " deleted event: " + eventClone.toString(),
-                siteName);
-
-        // Process webhook asynchronously after deletion is committed
-        webhookService.processResourceEvent(WebhookEventType.EVENT_DELETED, eventClone.getResource(), eventClone);
-
-        return true;
-    }
-        */
-
-    @Transactional
-    public boolean deleteEvent(Long id, String userId) {
-        Optional<Event> eventOpt = eventRepository.findById(id);
+        // --- NUOVA LOGICA: CANCELLAZIONE LOGICA ---
+        // Invece di cancellare fisicamente, impostiamo il flag. 
+        // L'Event Processor leggerà questo flag, invierà il Webhook e pulirà il DB.
+        event.setDeleted(true);
+        eventRepository.save(event);
         
-        if (!eventOpt.isPresent()) {
-            return false;
-        }
-        
-        Event event = eventOpt.get();
-        
-        // Check if user has permission to delete this event
-        if (!canModifyEvent(userId, event)) {
-            throw new AccessDeniedException("You don't have permission to delete this event");
-        }
-
-        // Store necessary data before deletion to avoid accessing deleted entity
-        String siteName = keycloakService.getSiteNameById(event.getResource().getSiteId(), "Unknown site");
-        
-        // Create a deep clone of the event for the webhook service to avoid accessing deleted entity
-        final Event eventClone = createEventClone(event);
-
-        // Delete the entity
-        eventRepository.deleteById(id);
-
         // Log the audit action
         auditLogService.logCrudAction(AuditLog.LogType.USER,
                 AuditLog.LogAction.DELETE,
                 new AuditLog.LogEntity("EVENT", id.toString()),
-                "User: " + userId + " deleted event: " + eventClone.toString(),
+                "User: " + userId + " marked event for deletion: " + event.getTitle(),
                 siteName);
 
-        // CRITICAL FIX: Ensure webhook is fired ONLY AFTER the transaction is fully committed to the DB
-        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-            @Override
-            public void afterCommit() {
-                log.info("Transaction committed for deleted event {}. Firing webhook...", eventClone.getId());
-                webhookService.processResourceEvent(WebhookEventType.EVENT_DELETED, eventClone.getResource(), eventClone);
-            }
-        });
+        log.info("Event {} marked as deleted by user {}. Awaiting Event Processor cleanup.", id, userId);
 
         return true;
     }
@@ -605,58 +559,6 @@ public class EventService {
         return keycloakService.isUserInGroup(userId, siteId);
     }
 
-
-    /**
-     * Create a deep clone (UPDATED)
-     */
-    private Event createEventClone(Event original) {
-        Event clone = new Event();
-        
-        // Copy all primitive fields
-        clone.setId(original.getId()); 
-        clone.setTitle(original.getTitle());
-        clone.setDescription(original.getDescription());
-        clone.setStart(original.getStart());
-        clone.setEnd(original.getEnd());
-        clone.setKeycloakId(original.getKeycloakId());
-        clone.setStartNotifiedAt(original.getStartNotifiedAt());
-        clone.setEndNotifiedAt(original.getEndNotifiedAt());
-        
-        // Copy audit fields from parent class
-        clone.setCreatedAt(original.getCreatedAt());
-        clone.setUpdatedAt(original.getUpdatedAt());
-        
-        // Create a safe copy of the resource that avoids lazy loading issues
-        if (original.getResource() != null) {
-            Resource originalResource = original.getResource();
-            Resource resourceClone = new Resource();
-            
-            // Copy basic resource fields without lazy collections
-            resourceClone.setId(originalResource.getId());
-            resourceClone.setName(originalResource.getName());
-            resourceClone.setSpecs(originalResource.getSpecs());
-            resourceClone.setLocation(originalResource.getLocation());
-            resourceClone.setStatus(originalResource.getStatus());
-            resourceClone.setSiteId(originalResource.getSiteId());
-            
-            // Create a safe copy of the resource type without lazy collections
-            if (originalResource.getType() != null) {
-                ResourceType originalType = originalResource.getType();
-                ResourceType typeClone = new ResourceType();
-                typeClone.setId(originalType.getId());
-                typeClone.setName(originalType.getName());
-                typeClone.setColor(originalType.getColor());
-                typeClone.setSiteId(originalType.getSiteId());
-                // Don't copy the resources collection to avoid lazy loading issues
-                resourceClone.setType(typeClone);
-            }
-            
-            // Don't copy collections (subResources, events) to avoid lazy loading issues
-            clone.setResource(resourceClone);
-        }
-        
-        return clone;
-    }
 
     // --- NUOVA LOGICA CORE: RISOLUZIONE URL E CHECKSUM ---
     

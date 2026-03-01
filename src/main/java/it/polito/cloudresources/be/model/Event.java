@@ -74,6 +74,10 @@ public class Event extends AuditableEntity {
 
     @Column(name = "checksum_type", length = 20)
     private String checksumType;
+
+    @Column(name = "deleted", nullable = false)
+    private boolean deleted = false;
+    // -----------------------------------------
     // ----------------------------------------
 
     /**
@@ -117,11 +121,13 @@ public class Event extends AuditableEntity {
                 ", end=" + end +
                 ", resourceId=" + (resource != null ? resource.getId() : null) +
                 ", keycloakId='" + keycloakId + '\'' +
+                ", deleted=" + deleted +  // <--- AGGIUNTO: Fondamentale per il debug ora
                 ", startNotifiedAt=" + startNotifiedAt +
                 ", endNotifiedAt=" + endNotifiedAt +
                 ", operatingSystem='" + operatingSystem + '\'' +
                 ", imageUrl='" + imageUrl + '\'' +
                 ", checksumUrl='" + checksumUrl + '\'' +
+                ", checksumType='" + checksumType + '\'' + // <--- AGGIUNTO: Utile per Metal3
                 '}';
     }
 }
