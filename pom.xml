@@ -5,7 +5,7 @@
     
     <groupId>it.polito.cloudresources.be</groupId>
     <artifactId>resource-management</artifactId>
-    <version>1.9.13-dev</version>
+    <version>1.9.14-dev</version>
     <name>resource-management</name>
     <description>Cloud Resource Management Backend</description>
     

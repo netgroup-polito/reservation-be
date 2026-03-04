@@ -11,13 +11,8 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Migration runner to link legacy reservations (which have ssh_key_id = NULL)
- * to the user's Default SSH key.
- * This ensures that existing reservations continue to work with the new wallet system.
- */
 @Component
-@Order(2) // Run after SshKeyMigrationRunner (which is Order 1)
+@Order(2)
 @RequiredArgsConstructor
 @Slf4j
 public class LegacyReservationMigrationRunner implements CommandLineRunner {
@@ -30,9 +25,19 @@ public class LegacyReservationMigrationRunner implements CommandLineRunner {
         log.info("--- Starting Legacy Reservation Migration (Linking Events to SSH Keys) ---");
 
         try {
-            // 1. Find all events with NULL ssh_key_id
-            String findLegacyEventsSql = "SELECT id, keycloak_id FROM events WHERE ssh_key_id IS NULL";
+            // 0. CHECK INTELLIGENTE: La colonna esiste ancora?
+            String checkColumnSql = "SELECT count(*) FROM information_schema.columns " +
+                                    "WHERE table_name = 'events' AND column_name = 'ssh_key_id'";
             
+            Integer columnExists = jdbcTemplate.queryForObject(checkColumnSql, Integer.class);
+
+            if (columnExists == null || columnExists == 0) {
+                log.info("Column 'ssh_key_id' does not exist in 'events' table. Migration already completed or fresh database. Skipping.");
+                return; // Usciamo puliti, senza errori!
+            }
+
+            // 1. Se la colonna esiste, procediamo con la migrazione
+            String findLegacyEventsSql = "SELECT id, keycloak_id FROM events WHERE ssh_key_id IS NULL";
             List<Map<String, Object>> legacyEvents = jdbcTemplate.queryForList(findLegacyEventsSql);
             
             if (legacyEvents.isEmpty()) {
@@ -47,8 +52,7 @@ public class LegacyReservationMigrationRunner implements CommandLineRunner {
                 Long eventId = (Long) eventRow.get("id");
                 String userId = (String) eventRow.get("keycloak_id");
 
-                // 2. Find a suitable key for this user 
-                // Priority: Label='Default' -> Any Key (ordered by ID)
+                // 2. Trova la chiave adatta
                 String findKeySql = "SELECT id FROM ssh_keys WHERE user_id = ? ORDER BY CASE WHEN label = 'Default' THEN 0 ELSE 1 END, id LIMIT 1";
                 
                 try {
@@ -56,7 +60,7 @@ public class LegacyReservationMigrationRunner implements CommandLineRunner {
                     
                     if (!keyIds.isEmpty()) {
                         Long keyId = keyIds.get(0);
-                        // 3. Update the event
+                        // 3. Aggiorna l'evento
                         int rows = jdbcTemplate.update("UPDATE events SET ssh_key_id = ? WHERE id = ?", keyId, eventId);
                         if (rows > 0) {
                             updatedCount++;
@@ -72,8 +76,7 @@ public class LegacyReservationMigrationRunner implements CommandLineRunner {
             log.info("--- Migration Completed. Updated {} events out of {}. ---", updatedCount, legacyEvents.size());
             
         } catch (Exception e) {
-            // Se la colonna non esiste ancora nel DB o c'è un errore SQL, lo catturiamo qui senza far crashare l'app!
-            log.warn("Skipping Legacy Reservation Migration: database schema might not be ready yet (e.g., missing ssh_key_id column). Details: {}", e.getMessage());
+            log.error("Critical error during Legacy Reservation Migration: {}", e.getMessage(), e);
         }
     }
 }
