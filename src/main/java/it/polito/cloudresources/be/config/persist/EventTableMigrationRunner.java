@@ -14,7 +14,7 @@ import org.springframework.transaction.annotation.Transactional;
  * ensuring backwards compatibility with existing rows in production.
  */
 @Component
-@Order(1) // Eseguiamo assieme alle altre migrazioni DDL
+@Order(2) // Eseguiamo assieme alle altre migrazioni DDL
 @RequiredArgsConstructor
 @Slf4j
 public class EventTableMigrationRunner implements CommandLineRunner {
