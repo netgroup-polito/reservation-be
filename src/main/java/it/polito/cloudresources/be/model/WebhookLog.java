@@ -29,12 +29,12 @@ public class WebhookLog extends AuditableEntity {
     @Enumerated(EnumType.STRING)
     private WebhookEventType eventType;
     
-    @Column(length = 4000)
+    @Column(columnDefinition = "TEXT")
     private String payload;
     
     private Integer statusCode;
     
-    @Column(length = 4000)
+    @Column(columnDefinition = "TEXT")
     private String response;
     
     private boolean success;
