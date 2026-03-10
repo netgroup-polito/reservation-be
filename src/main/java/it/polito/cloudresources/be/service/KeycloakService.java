@@ -1,6 +1,7 @@
 package it.polito.cloudresources.be.service;
 
 import it.polito.cloudresources.be.dto.users.UserDTO;
+import jakarta.annotation.PreDestroy;
 import jakarta.transaction.Transactional;
 import jakarta.ws.rs.core.Response;
 import lombok.extern.slf4j.Slf4j;
@@ -70,14 +71,38 @@ public class KeycloakService {
     @Value("${keycloak.credentials.secret}")
     private String clientSecret;
 
+    //Variabili per il Singleton
+    private volatile Keycloak keycloakInstance;
+    private final Object lock = new Object();
+
+    /**
+     * Creates an admin Keycloak client
+     */
+
     protected Keycloak getKeycloakClient() {
-        return KeycloakBuilder.builder()
-                .serverUrl(authServerUrl)
-                .realm(realm)
-                .clientId(clientId)
-                .clientSecret(clientSecret)
-                .grantType(OAuth2Constants.CLIENT_CREDENTIALS)
-                .build();
+        if (keycloakInstance == null || keycloakInstance.isClosed()) {
+            synchronized (lock) {
+                if (keycloakInstance == null || keycloakInstance.isClosed()) {
+                    log.info("Initializing new Keycloak Client instance");
+                    keycloakInstance = KeycloakBuilder.builder()
+                            .serverUrl(authServerUrl)
+                            .realm(realm)
+                            .clientId(clientId)
+                            .clientSecret(clientSecret)
+                            .grantType(OAuth2Constants.CLIENT_CREDENTIALS)
+                            .build();
+                }
+            }
+        }
+        return keycloakInstance;
+    }
+
+    @PreDestroy
+    public void closeKeycloakClient() {
+        if (keycloakInstance != null && !keycloakInstance.isClosed()) {
+            log.info("Closing Keycloak Client gracefully on application shutdown");
+            keycloakInstance.close();
+        }
     }
 
     protected RealmResource getRealmResource() {
