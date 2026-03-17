@@ -2,6 +2,8 @@ package it.polito.cloudresources.be.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.core.type.TypeReference;
+
 import it.polito.cloudresources.be.config.datetime.DateTimeConfig;
 import it.polito.cloudresources.be.dto.WebhookLogRequestDTO;
 import it.polito.cloudresources.be.dto.webhooks.WebhookConfigDTO;
@@ -13,6 +15,7 @@ import it.polito.cloudresources.be.repository.ResourceRepository;
 import it.polito.cloudresources.be.repository.ResourceTypeRepository;
 import it.polito.cloudresources.be.repository.WebhookConfigRepository;
 import it.polito.cloudresources.be.repository.WebhookLogRepository;
+import it.polito.cloudresources.be.repository.SshKeyRepository;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -38,6 +41,8 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.Optional;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * Service for webhook operations
@@ -51,6 +56,7 @@ public class WebhookService {
     private final WebhookLogRepository webhookLogRepository;
     private final ResourceRepository resourceRepository;
     private final ResourceTypeRepository resourceTypeRepository;
+    private final SshKeyRepository sshKeyRepository;
     private final WebhookMapper webhookMapper;
     private final ObjectMapper objectMapper;
     private final AuditLogService auditLogService;
@@ -335,11 +341,7 @@ public class WebhookService {
     }
     
     /**
-     * Process a resource event by sending webhooks
-     * 
-     * @param eventType The type of event
-     * @param resource The resource involved
-     * @param data The event data
+     * Process a resource event by sending webhooks (Updated for SSH Keys List)
      */
     @Async
     @Transactional
@@ -347,26 +349,67 @@ public class WebhookService {
         try {
             log.debug("Processing resource event {} for resource {}", eventType, resource.getId());
             
-            // Find relevant webhooks for this resource and event type
+            // Variabile per i dati che invieremo
+            Object payloadData = data;
+
+            // Logica specifica per START e CREATED: Arricchimento Chiavi SSH
+            if ((eventType == WebhookEventType.EVENT_START || eventType == WebhookEventType.EVENT_CREATED) 
+                && data instanceof Event) {
+                
+                Event event = (Event) data;
+                
+                if (event.getKeycloakId() != null) {
+                    try {
+                        // FIX 1: Conversione sicura della Mappa usando TypeReference
+                        Map<String, Object> eventMap = objectMapper.convertValue(event, new TypeReference<Map<String, Object>>() {});
+
+                        // FIX 2: Usa il nome corretto del metodo nel Repository (findAllByUserId)
+                        List<SshKey> userKeys = sshKeyRepository.findAllByUserId(event.getKeycloakId());
+                        
+                        // FIX 3: Estrazione stringhe
+                        // NOTA: Se 'getSshPublicKey' è rosso, apri SshKey.java e controlla il nome del getter (es. getPublicKey o getKey)
+                        List<String> sshKeyList = userKeys.stream().map(SshKey::getSshKey).collect(Collectors.toList());
+
+                        // 4. Inserimento nel JSON
+                        eventMap.put("sshKeys", sshKeyList);
+                        
+                        // Pulizia campi legacy
+                        eventMap.remove("sshPublicKey"); 
+                        eventMap.remove("sshKeyId");
+                        eventMap.remove("ssh_key"); 
+
+                        // Info extra
+                        eventMap.put("resourceName", resource.getName());
+                        eventMap.put("resourceId", resource.getId());
+
+                        payloadData = eventMap;
+                        
+                        log.debug("Enriched webhook payload with {} SSH keys for user {}", sshKeyList.size(), event.getKeycloakId());
+                    } catch (Exception e) {
+                        log.error("Failed to fetch SSH keys for webhook enrichment: {}", e.getMessage());
+                    }
+                }
+            }
+
+            // Recupera i webhook configurati
             List<WebhookConfig> webhooks = webhookConfigRepository.findRelevantWebhooksForResourceEvent(
                     resource.getId(), eventType);
             
             log.debug("Found {} webhooks to process", webhooks.size());
             
-            // Process each webhook
             for (WebhookConfig webhook : webhooks) {
                 try {
-                    executeWebhook(webhook, eventType, data, resource);
+                    executeWebhook(webhook, eventType, payloadData, resource);
                 } catch (Exception e) {
                     log.error("Error executing webhook {}: {}", webhook.getName(), e.getMessage());
-                    scheduleRetry(webhook, eventType, data, resource);
+                    scheduleRetry(webhook, eventType, payloadData, resource);
                 }
             }
         } catch (Exception e) {
             log.error("Error processing resource event: {}", e.getMessage(), e);
         }
     }
-    
+
     /**
      * Execute a test webhook
      * 

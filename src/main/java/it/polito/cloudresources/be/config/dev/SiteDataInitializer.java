@@ -68,10 +68,7 @@ public class SiteDataInitializer {
                 String uniRomaAdminId = createSiteAdmin("uniroma_admin", "Uniroma", "Admin", uniRomaId);
                 String uniMiAdminId = createSiteAdmin("unimi_admin", "Unimi", "Admin", uniMiId);
 
-                // Create regular users for each university
-                String userPoliToId = createRegularUser("user_polito", "User", "Polito", poliToId);
-                String userUniRomaId = createRegularUser("user_uniroma", "User", "Uniroma", uniRomaId);
-                String userUniMiId = createRegularUser("user_unimi", "User", "Unimi", uniMiId);
+                
 
                 // Make sure admin roles are correctly assigned
                 ensureAdminRoles(globalAdminId, adminRoles);
@@ -131,7 +128,7 @@ public class SiteDataInitializer {
 
     /**
      * Create regular user directly with Keycloak service
-     */
+     
     private String createRegularUser(String username, String firstName, String lastName, String siteId) {
         try {
             // Check if user already exists
@@ -160,7 +157,7 @@ public class SiteDataInitializer {
             log.error("Error creating regular user {}: {}", username, e.getMessage());
             throw new RuntimeException("Failed to create regular user", e);
         }
-    }
+    }*/
     
     /**
      * Ensure admin roles are correctly assigned

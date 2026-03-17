@@ -42,7 +42,7 @@ public class CreateUserDTO {
 
     private String avatar;
 
-    private String sshPublicKey;
+    // RIMOSSO: private String sshPublicKey; -> Le chiavi si aggiungono dopo tramite Wallet
 
     @NotNull(message = "Roles are required")
     private Set<String> roles;
